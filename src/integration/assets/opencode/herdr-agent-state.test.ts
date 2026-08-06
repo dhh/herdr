@@ -133,6 +133,46 @@ test("reports a selected existing session before its lifecycle state", async () 
   expect(requests.map(requestSessionStartSource)).toEqual([undefined, "resume", undefined]);
 });
 
+test("reports switching back while the previous resume is pending", async () => {
+  const plugin = await loadPlugin();
+  await plugin["chat.message"]({ sessionID: "session-a" });
+  autoAcknowledge = false;
+
+  const sessionBDispatched = waitForNextRequest();
+  const switchToB = plugin["chat.message"]({ sessionID: "session-b" });
+  await sessionBDispatched;
+
+  const sessionADispatched = waitForNextRequest();
+  const switchBackToA = plugin["chat.message"]({ sessionID: "session-a" });
+  clients[1]?.emit("data");
+  await sessionADispatched;
+
+  const stateBDispatched = waitForNextRequest();
+  clients[2]?.emit("data");
+  await stateBDispatched;
+
+  const stateADispatched = waitForNextRequest();
+  clients[3]?.emit("data");
+  await stateADispatched;
+  clients[4]?.emit("data");
+  await Promise.all([switchToB, switchBackToA]);
+
+  expect(requests.map(requestMethod)).toEqual([
+    "pane.report_agent",
+    "pane.report_agent_session",
+    "pane.report_agent_session",
+    "pane.report_agent",
+    "pane.report_agent",
+  ]);
+  expect(requests.map(requestSessionID)).toEqual([
+    "session-a",
+    "session-b",
+    "session-a",
+    "session-b",
+    "session-a",
+  ]);
+});
+
 test("does not reclassify a new session as resumed while its report is pending", async () => {
   const plugin = await loadPlugin();
   await plugin["chat.message"]({ sessionID: "old-session" });

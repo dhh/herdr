@@ -137,6 +137,7 @@ export const HerdrAgentStatePlugin = async () => {
         return;
       }
       if (sessionID && reportedRootSessionID && sessionID !== reportedRootSessionID) {
+        reportedRootSessionID = sessionID;
         await reportSession(sessionID, "resume");
       }
       await reportState("working", sessionID);
