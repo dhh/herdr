@@ -114,6 +114,53 @@ test("suppresses redundant same-session updates", async () => {
   expect(requests.map(requestSessionID)).toEqual(["root-session", "replacement-session"]);
 });
 
+test("reports a selected existing session before its lifecycle state", async () => {
+  const plugin = await loadPlugin();
+
+  await plugin["chat.message"]({ sessionID: "newer-session" });
+  await plugin["chat.message"]({ sessionID: "selected-older-session" });
+
+  expect(requests.map(requestMethod)).toEqual([
+    "pane.report_agent",
+    "pane.report_agent_session",
+    "pane.report_agent",
+  ]);
+  expect(requests.map(requestSessionID)).toEqual([
+    "newer-session",
+    "selected-older-session",
+    "selected-older-session",
+  ]);
+  expect(requests.map(requestSessionStartSource)).toEqual([undefined, "resume", undefined]);
+});
+
+test("does not reclassify a new session as resumed while its report is pending", async () => {
+  const plugin = await loadPlugin();
+  await plugin["chat.message"]({ sessionID: "old-session" });
+  autoAcknowledge = false;
+
+  const createdDispatched = waitForNextRequest();
+  const created = plugin.event({
+    event: { type: "session.created", properties: { sessionID: "new-session" } },
+  });
+  await createdDispatched;
+
+  const stateDispatched = waitForNextRequest();
+  const message = plugin["chat.message"]({ sessionID: "new-session" });
+  expect(clients).toHaveLength(2);
+  clients[1]?.emit("data");
+  await stateDispatched;
+  expect(clients).toHaveLength(3);
+  clients[2]?.emit("data");
+  await Promise.all([created, message]);
+
+  expect(requests.map(requestMethod)).toEqual([
+    "pane.report_agent",
+    "pane.report_agent_session",
+    "pane.report_agent",
+  ]);
+  expect(requests.map(requestSessionStartSource)).toEqual([undefined, "new", undefined]);
+});
+
 test("reports retry status as working", async () => {
   const plugin = await loadPlugin();
 
@@ -179,6 +226,10 @@ function requestSeq(request: unknown): unknown {
 
 function requestSessionID(request: unknown): unknown {
   return requestParam(request, "agent_session_id");
+}
+
+function requestSessionStartSource(request: unknown): unknown {
+  return requestParam(request, "session_start_source");
 }
 
 function requestParam(request: unknown, name: string): unknown {
