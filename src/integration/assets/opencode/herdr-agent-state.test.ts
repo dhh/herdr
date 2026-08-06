@@ -144,17 +144,21 @@ test("reports switching back while the previous resume is pending", async () => 
 
   const sessionADispatched = waitForNextRequest();
   const switchBackToA = plugin["chat.message"]({ sessionID: "session-a" });
-  clients[1]?.emit("data");
+  expect(clients[1]).toBeDefined();
+  clients[1]!.emit("data");
   await sessionADispatched;
 
   const stateBDispatched = waitForNextRequest();
-  clients[2]?.emit("data");
+  expect(clients[2]).toBeDefined();
+  clients[2]!.emit("data");
   await stateBDispatched;
 
   const stateADispatched = waitForNextRequest();
-  clients[3]?.emit("data");
+  expect(clients[3]).toBeDefined();
+  clients[3]!.emit("data");
   await stateADispatched;
-  clients[4]?.emit("data");
+  expect(clients[4]).toBeDefined();
+  clients[4]!.emit("data");
   await Promise.all([switchToB, switchBackToA]);
 
   expect(requests.map(requestMethod)).toEqual([
