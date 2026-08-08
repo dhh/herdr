@@ -306,6 +306,10 @@ const DEFAULT_CONFIG: &str = r##"# herdr configuration
 # Draw borders around split panes.
 # pane_borders = true
 
+# Draw borders along the outside edge of the pane area.
+# Disable for tmux-style internal splitters without an outside frame.
+# pane_outer_borders = true
+
 # Draw interactive scrollbars beside terminal panes.
 # Set false to reclaim the scrollbar column and keep it out of terminal-native selections.
 # pane_scrollbars = true

@@ -659,6 +659,12 @@
           "description": "Draw borders around split panes."
         },
         {
+          "key": "ui.pane_outer_borders",
+          "type": "boolean",
+          "default": "true",
+          "description": "Draw borders along the outside edge of the pane area. Disable with pane gaps disabled for tmux-style internal splitters without an outside frame."
+        },
+        {
           "key": "ui.pane_scrollbars",
           "type": "boolean",
           "default": "true",
