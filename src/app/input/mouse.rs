@@ -1099,13 +1099,16 @@ impl AppState {
                         .and_then(|ws| ws.focused_pane_id());
                     let source_pane_id =
                         previous_focused_pane_id.filter(|pane_id| *pane_id != info.id);
-                    let has_manual_label = self
+                    let pane_state = self
                         .workspaces
                         .get(ws_idx)
-                        .and_then(|ws| ws.pane_state(info.id))
+                        .and_then(|ws| ws.pane_state(info.id));
+                    let has_manual_label = pane_state
                         .and_then(|pane| self.terminals.get(&pane.attached_terminal_id))
                         .and_then(|terminal| terminal.manual_label.as_ref())
                         .is_some();
+                    let right_click_passthrough =
+                        pane_state.is_some_and(|pane| pane.right_click_passthrough);
                     self.context_menu = Some(ContextMenuState {
                         kind: ContextMenuKind::Pane {
                             ws_idx,
@@ -1113,6 +1116,7 @@ impl AppState {
                             pane_id: info.id,
                             source_pane_id,
                             has_manual_label,
+                            right_click_passthrough,
                         },
                         x: mouse.column,
                         y: mouse.row,
@@ -1565,14 +1569,22 @@ impl AppState {
             return false;
         }
 
-        let Some(modifiers) = self.right_click_passthrough_modifiers else {
+        let Some(info) = self.pane_at(mouse.column, mouse.row).cloned() else {
             return false;
         };
-        if mouse.modifiers != modifiers {
-            return false;
-        }
-
-        let Some(info) = self.pane_at(mouse.column, mouse.row).cloned() else {
+        let configured_modifiers = self
+            .right_click_passthrough_modifiers
+            .filter(|modifiers| mouse.modifiers == *modifiers);
+        let pane_passthrough = mouse.modifiers.is_empty()
+            && self.active.is_some_and(|ws_idx| {
+                self.workspaces
+                    .get(ws_idx)
+                    .and_then(|workspace| workspace.pane_state(info.id))
+                    .is_some_and(|pane| pane.right_click_passthrough)
+            });
+        let Some(modifiers) = configured_modifiers
+            .or_else(|| pane_passthrough.then(crossterm::event::KeyModifiers::empty))
+        else {
             return false;
         };
 
@@ -2039,6 +2051,98 @@ mod tests {
         assert!(app.handle_raw_input_event(event).await);
 
         assert!(input_rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn pane_right_click_passthrough_is_isolated() {
+        let mut app = app_for_mouse_test();
+        let mut ws = Workspace::test_new("test");
+        let passthrough_pane = ws.tabs[0].root_pane;
+        let default_pane = ws.test_split(Direction::Horizontal);
+        ws.pane_state_mut(passthrough_pane)
+            .unwrap()
+            .right_click_passthrough = true;
+        app.state.workspaces = vec![ws];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = Mode::Terminal;
+        crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 106, 20));
+
+        let passthrough_info = app.state.pane_info_by_id(passthrough_pane).unwrap().clone();
+        let default_info = app.state.pane_info_by_id(default_pane).unwrap().clone();
+        let (passthrough_runtime, mut passthrough_input) =
+            crate::terminal::TerminalRuntime::test_with_channel_and_scrollback_bytes(
+                passthrough_info.inner_rect.width,
+                passthrough_info.inner_rect.height,
+                0,
+                b"\x1b[?1002h\x1b[?1006h",
+                4,
+            );
+        let (default_runtime, mut default_input) =
+            crate::terminal::TerminalRuntime::test_with_channel_and_scrollback_bytes(
+                default_info.inner_rect.width,
+                default_info.inner_rect.height,
+                0,
+                b"\x1b[?1002h\x1b[?1006h",
+                4,
+            );
+        app.state
+            .insert_test_runtime(passthrough_pane, passthrough_runtime);
+        app.state.insert_test_runtime(default_pane, default_runtime);
+
+        let col = passthrough_info.inner_rect.x + 2;
+        let row = passthrough_info.inner_rect.y + 3;
+        app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Right), col, row));
+
+        assert_eq!(app.state.mode, Mode::Terminal);
+        assert!(app.state.context_menu.is_none());
+        assert_eq!(
+            passthrough_input.try_recv().unwrap(),
+            Bytes::from_static(b"\x1b[<2;3;4M")
+        );
+
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Right),
+            default_info.inner_rect.x + 2,
+            default_info.inner_rect.y + 3,
+        ));
+
+        assert!(default_input.try_recv().is_err());
+        assert!(matches!(
+            app.state.context_menu.as_ref().map(|menu| &menu.kind),
+            Some(ContextMenuKind::Pane { pane_id, .. }) if *pane_id == default_pane
+        ));
+    }
+
+    #[tokio::test]
+    async fn pane_right_click_passthrough_falls_back_when_mouse_reporting_is_off() {
+        let mut app = app_for_mouse_test();
+        let mut ws = Workspace::test_new("test");
+        let pane_id = ws.tabs[0].root_pane;
+        ws.pane_state_mut(pane_id).unwrap().right_click_passthrough = true;
+        app.state.workspaces = vec![ws];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = Mode::Terminal;
+        crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 106, 20));
+        let info = app.state.pane_info_by_id(pane_id).unwrap().clone();
+        app.state.insert_test_runtime(
+            pane_id,
+            crate::terminal::TerminalRuntime::test_with_screen_bytes(
+                info.inner_rect.width,
+                info.inner_rect.height,
+                b"",
+            ),
+        );
+
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Right),
+            info.inner_rect.x + 2,
+            info.inner_rect.y + 3,
+        ));
+
+        assert_eq!(app.state.mode, Mode::ContextMenu);
+        assert!(app.state.context_menu.is_some());
     }
 
     #[tokio::test]
@@ -2966,6 +3070,7 @@ mod tests {
                 pane_id,
                 source_pane_id: None,
                 has_manual_label: false,
+                right_click_passthrough: false,
             },
             x: 2,
             y: 2,

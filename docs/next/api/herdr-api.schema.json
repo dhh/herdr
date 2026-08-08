@@ -2536,6 +2536,21 @@
           ],
           "type": "object"
         },
+        "PaneInputSetParams": {
+          "properties": {
+            "pane_id": {
+              "type": "string"
+            },
+            "right_click": {
+              "$ref": "#/schemas/request/$defs/PaneRightClickTarget"
+            }
+          },
+          "required": [
+            "pane_id",
+            "right_click"
+          ],
+          "type": "object"
+        },
         "PaneLayoutParams": {
           "properties": {
             "pane_id": {
@@ -2970,6 +2985,13 @@
           ],
           "type": "object"
         },
+        "PaneRightClickTarget": {
+          "enum": [
+            "herdr",
+            "pane"
+          ],
+          "type": "string"
+        },
         "PaneSendInputParams": {
           "properties": {
             "keys": {
@@ -3050,6 +3072,10 @@
                 "number",
                 "null"
               ]
+            },
+            "right_click": {
+              "$ref": "#/schemas/request/$defs/PaneRightClickTarget",
+              "default": "herdr"
             },
             "target_pane_id": {
               "type": [
@@ -5318,6 +5344,22 @@
             },
             "params": {
               "$ref": "#/schemas/request/$defs/PaneTarget"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "pane.input.set",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/PaneInputSetParams"
             }
           },
           "required": [

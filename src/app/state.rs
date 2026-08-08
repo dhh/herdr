@@ -1203,6 +1203,7 @@ pub enum ContextMenuKind {
         pane_id: PaneId,
         source_pane_id: Option<PaneId>,
         has_manual_label: bool,
+        right_click_passthrough: bool,
     },
 }
 
@@ -1215,91 +1216,53 @@ pub struct ContextMenuState {
 }
 
 impl ContextMenuState {
-    pub fn items(&self) -> &'static [&'static str] {
+    pub fn items(&self) -> Vec<&'static str> {
         match self.kind {
-            ContextMenuKind::Workspace { .. } => &["Rename", "Close"],
+            ContextMenuKind::Workspace { .. } => vec!["Rename", "Close"],
             ContextMenuKind::GitWorkspace {
                 is_linked_worktree: false,
                 has_worktree_children: false,
                 ..
-            } => &["Rename", "Close", "New worktree", "Open worktree..."],
+            } => vec!["Rename", "Close", "New worktree", "Open worktree..."],
             ContextMenuKind::GitWorkspace {
                 is_linked_worktree: true,
                 ..
-            } => &["Rename", "Close", "Delete worktree checkout..."],
+            } => vec!["Rename", "Close", "Delete worktree checkout..."],
             ContextMenuKind::GitWorkspace {
                 is_linked_worktree: false,
                 has_worktree_children: true,
-                collapsed: true,
+                collapsed,
                 ..
-            } => &[
+            } => vec![
                 "Rename",
                 "Close group",
                 "New worktree",
                 "Open worktree...",
-                "Expand",
+                if collapsed { "Expand" } else { "Collapse" },
             ],
-            ContextMenuKind::GitWorkspace {
-                is_linked_worktree: false,
-                has_worktree_children: true,
-                collapsed: false,
-                ..
-            } => &[
-                "Rename",
-                "Close group",
-                "New worktree",
-                "Open worktree...",
-                "Collapse",
-            ],
-            ContextMenuKind::Tab { .. } => &["New tab", "Rename", "Close"],
+            ContextMenuKind::Tab { .. } => vec!["New tab", "Rename", "Close"],
             ContextMenuKind::Pane {
-                has_manual_label: true,
-                source_pane_id: Some(_),
+                source_pane_id,
+                has_manual_label,
+                right_click_passthrough,
                 ..
-            } => &[
-                "Rename pane",
-                "Clear pane name",
-                "Swap with focused pane",
-                "Split right",
-                "Split down",
-                "Zoom",
-                "Close pane",
-            ],
-            ContextMenuKind::Pane {
-                has_manual_label: false,
-                source_pane_id: Some(_),
-                ..
-            } => &[
-                "Rename pane",
-                "Swap with focused pane",
-                "Split right",
-                "Split down",
-                "Zoom",
-                "Close pane",
-            ],
-            ContextMenuKind::Pane {
-                has_manual_label: true,
-                source_pane_id: None,
-                ..
-            } => &[
-                "Rename pane",
-                "Clear pane name",
-                "Split right",
-                "Split down",
-                "Zoom",
-                "Close pane",
-            ],
-            ContextMenuKind::Pane {
-                has_manual_label: false,
-                source_pane_id: None,
-                ..
-            } => &[
-                "Rename pane",
-                "Split right",
-                "Split down",
-                "Zoom",
-                "Close pane",
-            ],
+            } => {
+                let mut items = vec!["Rename pane"];
+                if has_manual_label {
+                    items.push("Clear pane name");
+                }
+                if source_pane_id.is_some() {
+                    items.push("Swap with focused pane");
+                }
+                items.extend(["Split right", "Split down", "Zoom"]);
+                items.push(if right_click_passthrough {
+                    "Use Herdr right-click menu"
+                } else {
+                    "Send right-clicks to pane"
+                });
+                items.push("Close pane");
+                items
+            }
         }
     }
 }

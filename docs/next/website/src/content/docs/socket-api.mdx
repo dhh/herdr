@@ -145,12 +145,20 @@ like `ctrl+h`, `control+j`, `alt+x`, and `shift+tab`, function keys like
 {"id":"req_focus","method":"pane.focus_direction","params":{"direction":"right"}}
 {"id":"req_resize","method":"pane.resize","params":{"pane_id":"w1:p1","direction":"right","amount":0.1}}
 {"id":"req_zoom","method":"pane.zoom","params":{"pane_id":"w1:p1","mode":"toggle"}}
-{"id":"req_split","method":"pane.split","params":{"direction":"right","ratio":0.333,"env":{"HERDR_ROLE":"tests"}}}
+{"id":"req_input","method":"pane.input.set","params":{"pane_id":"w1:p1","right_click":"pane"}}
+{"id":"req_split","method":"pane.split","params":{"direction":"right","ratio":0.333,"right_click":"pane","env":{"HERDR_ROLE":"tests"}}}
 {"id":"req_process","method":"pane.process_info","params":{"pane_id":"w1:p1"}}
 ```
 
 `pane.current` returns a single `PaneInfo`. When `caller_pane_id` is present,
 Herdr returns that pane. When it is omitted, Herdr returns the active focused
+pane.
+
+`pane.input.set` sets `right_click` to `herdr` or `pane` for one pane. `herdr`
+is the default. `pane` forwards unmodified right-click hold and drag gestures
+when the application requests terminal mouse reporting; otherwise Herdr falls
+back to its pane menu. Right-clicking the pane frame always opens Herdr's menu.
+`pane.split` accepts the same optional `right_click` value for the newly created
 pane.
 
 `PaneInfo` includes `scroll` when terminal scroll metrics are available:

@@ -578,6 +578,7 @@ impl App {
                 ratio: None,
                 cwd: None,
                 focus: true,
+                right_click: Default::default(),
                 env: Default::default(),
             },
         );
