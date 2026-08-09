@@ -407,7 +407,7 @@ pub(super) fn render_tab_bar(app: &AppState, frame: &mut Frame, area: Rect) {
         };
         let width = rect.width as usize;
         let name = tab_chrome_label(ws, idx);
-        let text = format!(" {:width$}", name, width = width.saturating_sub(1));
+        let text = format!("{name:^width$}");
         frame.render_widget(Paragraph::new(text).style(style), rect);
     }
 
@@ -654,6 +654,32 @@ mod tests {
         );
         assert!(view.tab_hit_areas[0].width > 0);
         assert!(view.new_tab_hit_area.width > 0);
+    }
+
+    #[test]
+    fn tab_labels_are_centered_in_their_cells() {
+        let mut app = AppState::test_new();
+        let mut ws = Workspace::test_new("test");
+        ws.tabs[0].set_custom_name("omarchy".into());
+
+        app.workspaces = vec![ws];
+        app.active = Some(0);
+        app.view.tab_bar_rect = Rect::new(0, 0, 30, 1);
+        let view = compute_tab_bar_view(&app.workspaces[0], app.view.tab_bar_rect, 0, true, false);
+        app.view.tab_hit_areas = view.tab_hit_areas;
+
+        let backend = TestBackend::new(30, 1);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| render_tab_bar(&app, frame, app.view.tab_bar_rect))
+            .unwrap();
+
+        let rect = app.view.tab_hit_areas[0];
+        let buffer = terminal.backend().buffer();
+        let cell: String = (rect.x..rect.x + rect.width)
+            .map(|x| buffer[(x, rect.y)].symbol())
+            .collect();
+        assert_eq!(cell, "  omarchy  ");
     }
 
     #[test]
