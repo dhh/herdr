@@ -40,9 +40,15 @@ fn tab_chrome_label(ws: &crate::workspace::Workspace, tab_idx: usize) -> String 
 }
 
 fn hostname_label(app: &AppState) -> Option<String> {
-    app.tab_bar_hostname
-        .as_deref()
-        .map(|hostname| format!(" {hostname} "))
+    // Hostnames can contain arbitrary bytes; drop control characters so they
+    // can't smuggle escape sequences into the row or skew its width math.
+    let hostname: String = app
+        .tab_bar_hostname
+        .as_deref()?
+        .chars()
+        .filter(|character| !character.is_control())
+        .collect();
+    (!hostname.is_empty()).then(|| format!(" {hostname} "))
 }
 
 // The tab strip's usable area once the right edge is reserved for the
@@ -498,6 +504,46 @@ mod tests {
         for rect in &view.tab_hit_areas {
             assert!(rect.x + rect.width <= reserved_x, "tab overlaps hostname");
         }
+    }
+
+    #[test]
+    fn hostname_control_characters_are_stripped_before_rendering() {
+        let mut app = AppState::test_new();
+        app.tab_bar_hostname = Some("win\x1b[31mter\u{9b}mute\r\n".into());
+        let ws = Workspace::test_new("test");
+
+        app.workspaces = vec![ws];
+        app.active = Some(0);
+        app.view.tab_bar_rect = Rect::new(0, 0, 40, 1);
+        let view = compute_tab_bar_view(
+            &app.workspaces[0],
+            tab_bar_content_area(&app, app.view.tab_bar_rect),
+            0,
+            true,
+            false,
+        );
+        app.view.tab_hit_areas = view.tab_hit_areas;
+
+        let backend = TestBackend::new(40, 1);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| render_tab_bar(&app, frame, app.view.tab_bar_rect))
+            .unwrap();
+
+        let row = buffer_row_text(terminal.backend().buffer(), app.view.tab_bar_rect, 0);
+        assert!(row.ends_with(" win[31mtermute"), "tab row: {row:?}");
+    }
+
+    #[test]
+    fn hostname_of_only_control_characters_is_not_rendered() {
+        let mut app = AppState::test_new();
+        app.tab_bar_hostname = Some("\x1b\r\n".into());
+
+        assert_eq!(hostname_label(&app), None);
+        assert_eq!(
+            tab_bar_content_area(&app, Rect::new(0, 0, 40, 1)),
+            Rect::new(0, 0, 40, 1)
+        );
     }
 
     #[test]
