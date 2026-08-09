@@ -12,6 +12,7 @@ use crate::app::AppState;
 const MIN_TAB_WIDTH: u16 = 8;
 const NEW_TAB_WIDTH: u16 = 3;
 const TAB_SCROLL_BUTTON_WIDTH: u16 = 3;
+const ZOOM_INDICATOR: &str = " ZOOM ";
 
 #[derive(Debug, Clone, Default)]
 pub(crate) struct TabBarView {
@@ -20,6 +21,14 @@ pub(crate) struct TabBarView {
     pub scroll_left_hit_area: Rect,
     pub scroll_right_hit_area: Rect,
     pub new_tab_hit_area: Rect,
+}
+
+fn zoom_indicator_width(ws: &crate::workspace::Workspace) -> u16 {
+    if ws.zoomed {
+        display_width_u16(ZOOM_INDICATOR).saturating_add(1)
+    } else {
+        0
+    }
 }
 
 fn tab_width(ws: &crate::workspace::Workspace, tab_idx: usize) -> u16 {
@@ -115,6 +124,16 @@ pub(crate) fn compute_tab_bar_view(
     mouse_chrome: bool,
 ) -> TabBarView {
     if area.width == 0 || area.height == 0 {
+        return TabBarView::default();
+    }
+
+    // Reserve the right edge for the zoom indicator so tabs and trailing
+    // controls never render underneath it.
+    let area = Rect {
+        width: area.width.saturating_sub(zoom_indicator_width(ws)),
+        ..area
+    };
+    if area.width == 0 {
         return TabBarView::default();
     }
 
@@ -380,16 +399,31 @@ pub(super) fn render_tab_bar(app: &AppState, frame: &mut Frame, area: Rect) {
         }
     }
     if last_visible_idx.is_some_and(|idx| idx + 1 < ws.tabs.len()) {
+        let content_right = area.x + area.width.saturating_sub(zoom_indicator_width(ws));
         let x = if app.mouse_capture && app.view.tab_scroll_right_hit_area.width > 0 {
             app.view.tab_scroll_right_hit_area.x.saturating_sub(1)
         } else {
-            area.x + area.width.saturating_sub(1)
+            content_right.saturating_sub(1)
         };
         if x >= area.x && x < area.x + area.width {
             frame.buffer_mut()[(x, area.y)]
                 .set_symbol("…")
                 .set_style(Style::default().fg(p.overlay0));
         }
+    }
+
+    if ws.zoomed {
+        let width = display_width_u16(ZOOM_INDICATOR).min(area.width);
+        let rect = Rect::new(area.x + area.width - width, area.y, width, 1);
+        frame.render_widget(
+            Paragraph::new(ZOOM_INDICATOR).style(
+                Style::default()
+                    .fg(panel_contrast_fg(p))
+                    .bg(p.accent)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            rect,
+        );
     }
 }
 
@@ -436,6 +470,57 @@ mod tests {
             app.workspaces[0].tab_display_name(custom_tab).as_deref(),
             Some("test")
         );
+    }
+
+    #[test]
+    fn tab_bar_shows_zoom_indicator_at_right_edge_when_active_tab_is_zoomed() {
+        let mut app = AppState::test_new();
+        let mut ws = Workspace::test_new("test");
+        ws.tabs[0].zoomed = true;
+
+        app.workspaces = vec![ws];
+        app.active = Some(0);
+        app.view.tab_bar_rect = Rect::new(0, 0, 30, 1);
+        let view = compute_tab_bar_view(&app.workspaces[0], app.view.tab_bar_rect, 0, true, false);
+        app.view.tab_hit_areas = view.tab_hit_areas.clone();
+
+        let backend = TestBackend::new(30, 1);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| render_tab_bar(&app, frame, app.view.tab_bar_rect))
+            .unwrap();
+
+        let buffer = terminal.backend().buffer();
+        let row = buffer_row_text(buffer, app.view.tab_bar_rect, 0);
+        assert!(row.ends_with(" ZOOM"), "tab row: {row:?}");
+        assert_eq!(buffer[(28, 0)].style().bg, Some(app.palette.accent));
+
+        // Tabs never render underneath the reserved indicator area.
+        let indicator_x = 30 - display_width_u16(ZOOM_INDICATOR) - 1;
+        for rect in &view.tab_hit_areas {
+            assert!(rect.x + rect.width <= indicator_x, "tab overlaps indicator");
+        }
+    }
+
+    #[test]
+    fn tab_bar_omits_zoom_indicator_when_active_tab_is_not_zoomed() {
+        let mut app = AppState::test_new();
+        let ws = Workspace::test_new("test");
+
+        app.workspaces = vec![ws];
+        app.active = Some(0);
+        app.view.tab_bar_rect = Rect::new(0, 0, 30, 1);
+        let view = compute_tab_bar_view(&app.workspaces[0], app.view.tab_bar_rect, 0, true, false);
+        app.view.tab_hit_areas = view.tab_hit_areas;
+
+        let backend = TestBackend::new(30, 1);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| render_tab_bar(&app, frame, app.view.tab_bar_rect))
+            .unwrap();
+
+        let row = buffer_row_text(terminal.backend().buffer(), app.view.tab_bar_rect, 0);
+        assert!(!row.contains("ZOOM"), "tab row: {row:?}");
     }
 
     #[test]
