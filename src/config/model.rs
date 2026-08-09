@@ -886,6 +886,8 @@ pub struct UiConfig {
     pub hide_tab_bar_when_single_tab: bool,
     /// Desktop tab row placement. Default: top.
     pub tab_bar_position: TabBarPositionConfig,
+    /// Show the machine hostname at the right edge of the desktop tab bar. Default: false.
+    pub tab_bar_hostname: bool,
     /// Agent sidebar ordering. Saved values are "spaces" or "priority". Default: "spaces".
     pub agent_panel_sort: AgentPanelSortConfig,
     /// Retired setting that Herdr wrote before the workspace filter was removed.
@@ -1102,6 +1104,7 @@ impl Default for UiConfig {
             show_agent_labels_on_pane_borders: false,
             hide_tab_bar_when_single_tab: false,
             tab_bar_position: TabBarPositionConfig::Top,
+            tab_bar_hostname: false,
             agent_panel_sort: AgentPanelSortConfig::Spaces,
             _legacy_agent_panel_scope: None,
             status_indicators: StatusIndicatorStyle::Dots,
@@ -1358,6 +1361,7 @@ status_indicators = "symbols"
             default_config.ui.tab_bar_position,
             TabBarPositionConfig::Top
         );
+        assert!(!default_config.ui.tab_bar_hostname);
 
         let toml = r#"
 [ui]
@@ -1368,6 +1372,7 @@ pane_gaps = true
 show_agent_labels_on_pane_borders = true
 hide_tab_bar_when_single_tab = true
 tab_bar_position = "bottom"
+tab_bar_hostname = true
 "#;
         let config: Config = toml::from_str(toml).unwrap();
         assert!(!config.ui.pane_borders);
@@ -1377,6 +1382,7 @@ tab_bar_position = "bottom"
         assert!(config.ui.show_agent_labels_on_pane_borders);
         assert!(config.ui.hide_tab_bar_when_single_tab);
         assert_eq!(config.ui.tab_bar_position, TabBarPositionConfig::Bottom);
+        assert!(config.ui.tab_bar_hostname);
     }
 
     #[test]

@@ -127,6 +127,31 @@ pub(crate) fn take_terminal_resize_signal() -> bool {
     false
 }
 
+/// The machine's node name, as shown by tmux's #h.
+#[cfg(unix)]
+pub(crate) fn hostname() -> Option<String> {
+    let mut buf = [0u8; 256];
+    let result = unsafe { libc::gethostname(buf.as_mut_ptr().cast::<libc::c_char>(), buf.len()) };
+    if result != 0 {
+        return None;
+    }
+    let end = buf.iter().position(|&byte| byte == 0).unwrap_or(buf.len());
+    let name = String::from_utf8_lossy(&buf[..end]).into_owned();
+    (!name.is_empty()).then_some(name)
+}
+
+#[cfg(windows)]
+pub(crate) fn hostname() -> Option<String> {
+    std::env::var("COMPUTERNAME")
+        .ok()
+        .filter(|name| !name.is_empty())
+}
+
+#[cfg(not(any(unix, windows)))]
+pub(crate) fn hostname() -> Option<String> {
+    None
+}
+
 #[cfg(unix)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClipboardCommand {

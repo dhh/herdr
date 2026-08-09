@@ -735,6 +735,12 @@
           ]
         },
         {
+          "key": "ui.tab_bar_hostname",
+          "type": "boolean",
+          "default": "false",
+          "description": "Show the machine hostname at the right edge of the desktop tab bar."
+        },
+        {
           "key": "ui.agent_panel_sort",
           "type": "enum",
           "default": "\"spaces\"",

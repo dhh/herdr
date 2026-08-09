@@ -1432,6 +1432,9 @@ pub struct AppState {
     pub show_agent_labels_on_pane_borders: bool,
     pub hide_tab_bar_when_single_tab: bool,
     pub tab_bar_position: TabBarPositionConfig,
+    /// Resolved hostname shown at the right edge of the desktop tab bar, when
+    /// `ui.tab_bar_hostname` is enabled and the platform reports one.
+    pub tab_bar_hostname: Option<String>,
     pub pane_history_persistence: bool,
     /// Expose the focused pane's cursor anchor to the outer terminal even when
     /// the pane requested `?25l`. See `[experimental] reveal_hidden_cursor_for_cjk_ime`.
@@ -1798,6 +1801,7 @@ impl AppState {
             show_agent_labels_on_pane_borders: false,
             hide_tab_bar_when_single_tab: false,
             tab_bar_position: TabBarPositionConfig::Top,
+            tab_bar_hostname: None,
             pane_history_persistence: false,
             reveal_hidden_cursor_for_cjk_ime: false,
             cjk_ime_agent_filter_configured: false,
