@@ -315,6 +315,10 @@ impl TerminalRuntime {
         self.0.input_state()
     }
 
+    pub fn alternate_screen_active(&self) -> bool {
+        self.0.alternate_screen_active()
+    }
+
     pub fn cursor_state(
         &self,
         area: Rect,

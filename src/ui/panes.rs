@@ -32,10 +32,7 @@ fn pane_border_title(label: &str, pane_width: u16, _focused: bool) -> Option<Str
 }
 
 fn terminal_inner_rect(rt: &TerminalRuntime, pane_inner: Rect, pane_scrollbars: bool) -> Rect {
-    if !pane_scrollbars
-        || pane_inner.width <= 4
-        || rt.input_state().is_some_and(|state| state.alternate_screen)
-    {
+    if !pane_scrollbars || pane_inner.width <= 4 || rt.alternate_screen_active() {
         return pane_inner;
     }
 
