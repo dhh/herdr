@@ -323,14 +323,14 @@ impl App {
             NavigateAction::MoveTabPrevious => {
                 if let Some((ws_idx, source, insert)) = self.active_tab_move(-1) {
                     self.move_tab_via_api(ws_idx, source, insert);
-                    leave_navigate_mode(&mut self.state);
                 }
+                leave_navigate_mode(&mut self.state);
             }
             NavigateAction::MoveTabNext => {
                 if let Some((ws_idx, source, insert)) = self.active_tab_move(1) {
                     self.move_tab_via_api(ws_idx, source, insert);
-                    leave_navigate_mode(&mut self.state);
                 }
+                leave_navigate_mode(&mut self.state);
             }
             NavigateAction::CloseTab => {
                 if !self.close_active_tab_via_api_requires_confirmation() {
@@ -2778,6 +2778,28 @@ resize_pane_left = "prefix+shift+left"
 
         assert_eq!(tab_labels(&state), vec!["only"]);
         assert_eq!(state.workspaces[0].active_tab, 0);
+    }
+
+    #[test]
+    fn move_tab_with_a_single_tab_still_exits_navigate_mode() {
+        let event_hub = crate::api::EventHub::default();
+        let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut app = crate::app::App::new(
+            &crate::config::Config::default(),
+            true,
+            None,
+            api_rx,
+            event_hub,
+        );
+        app.state.workspaces = vec![crate::workspace::Workspace::test_new("solo")];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = Mode::Navigate;
+
+        app.execute_tui_navigate_action(NavigateAction::MoveTabNext, ActionContext::Navigate);
+
+        assert_eq!(app.state.workspaces[0].tabs.len(), 1);
+        assert_eq!(app.state.mode, Mode::Terminal);
     }
 
     #[test]
