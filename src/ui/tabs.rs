@@ -407,7 +407,14 @@ pub(super) fn render_tab_bar(app: &AppState, frame: &mut Frame, area: Rect) {
         };
         let width = rect.width as usize;
         let name = tab_chrome_label(ws, idx);
-        let text = format!("{name:^width$}");
+        // Pad by terminal columns, not chars, so wide glyphs stay centered.
+        let padding = width.saturating_sub(display_width_u16(&name) as usize);
+        let left = padding / 2;
+        let text = format!(
+            "{empty:left$}{name}{empty:right$}",
+            empty = "",
+            right = padding - left
+        );
         frame.render_widget(Paragraph::new(text).style(style), rect);
     }
 
@@ -654,6 +661,36 @@ mod tests {
         );
         assert!(view.tab_hit_areas[0].width > 0);
         assert!(view.new_tab_hit_area.width > 0);
+    }
+
+    #[test]
+    fn cjk_tab_labels_are_centered_by_display_width() {
+        let mut app = AppState::test_new();
+        let mut ws = Workspace::test_new("test");
+        ws.tabs[0].set_custom_name("提交 herdr 的反馈".into());
+
+        app.workspaces = vec![ws];
+        app.active = Some(0);
+        app.view.tab_bar_rect = Rect::new(0, 0, 30, 1);
+        let view = compute_tab_bar_view(&app.workspaces[0], app.view.tab_bar_rect, 0, true, false);
+        app.view.tab_hit_areas = view.tab_hit_areas;
+
+        let backend = TestBackend::new(30, 1);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| render_tab_bar(&app, frame, app.view.tab_bar_rect))
+            .unwrap();
+
+        // 17 display columns + 4 padding: two columns each side, wide glyphs
+        // starting right after the left padding.
+        let rect = app.view.tab_hit_areas[0];
+        assert_eq!(rect.width, 21);
+        let buffer = terminal.backend().buffer();
+        assert_eq!(buffer[(rect.x, rect.y)].symbol(), " ");
+        assert_eq!(buffer[(rect.x + 1, rect.y)].symbol(), " ");
+        assert_eq!(buffer[(rect.x + 2, rect.y)].symbol(), "提");
+        assert_eq!(buffer[(rect.x + rect.width - 2, rect.y)].symbol(), " ");
+        assert_eq!(buffer[(rect.x + rect.width - 1, rect.y)].symbol(), " ");
     }
 
     #[test]
