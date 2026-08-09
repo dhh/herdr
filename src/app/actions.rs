@@ -1748,7 +1748,7 @@ impl AppState {
 
         let layout = crate::ui::compute_tab_bar_view(
             ws,
-            area,
+            crate::ui::tab_bar_content_area(self, area),
             self.tab_scroll,
             self.tab_scroll_follow_active,
             self.mouse_capture,

@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Added
+- `ui.tab_bar_hostname = true` now shows the machine hostname at the right edge of the desktop tab bar; remote sessions show the remote machine's hostname.
 - Devin CLI, Cursor Agent CLI, MastraCode, Hermes Agent, and Grok CLI integrations now install and run natively on Windows.
 - Panes can now route normal right-click gestures to mouse-reporting applications through the pane menu, `herdr pane input`, `pane.input.set`, or the `pane split --right-click pane` launch option.
 - `theme.custom.sidebar_bg` can now give the desktop sidebar its own background without changing built-in theme defaults.
