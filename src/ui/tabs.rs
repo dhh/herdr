@@ -12,6 +12,9 @@ use crate::app::AppState;
 const MIN_TAB_WIDTH: u16 = 8;
 const NEW_TAB_WIDTH: u16 = 3;
 const TAB_SCROLL_BUTTON_WIDTH: u16 = 3;
+// The narrowest tab strip worth keeping interactive: one minimum-width tab
+// plus the trailing controls. Decorations yield below this.
+const MIN_TAB_STRIP_WIDTH: u16 = MIN_TAB_WIDTH + NEW_TAB_WIDTH + TAB_SCROLL_BUTTON_WIDTH;
 
 #[derive(Debug, Clone, Default)]
 pub(crate) struct TabBarView {
@@ -39,7 +42,7 @@ fn tab_chrome_label(ws: &crate::workspace::Workspace, tab_idx: usize) -> String 
     }
 }
 
-fn hostname_label(app: &AppState) -> Option<String> {
+fn hostname_label(app: &AppState, area: Rect) -> Option<String> {
     // Hostnames can contain arbitrary bytes; drop control characters so they
     // can't smuggle escape sequences into the row or skew its width math.
     let hostname: String = app
@@ -48,13 +51,22 @@ fn hostname_label(app: &AppState) -> Option<String> {
         .chars()
         .filter(|character| !character.is_control())
         .collect();
-    (!hostname.is_empty()).then(|| format!(" {hostname} "))
+    if hostname.is_empty() {
+        return None;
+    }
+    let label = format!(" {hostname} ");
+    // Tabs win over decoration: hide the hostname entirely rather than let its
+    // reservation squeeze the tab strip below a usable width.
+    let remaining = area
+        .width
+        .saturating_sub(display_width_u16(&label).saturating_add(1));
+    (remaining >= MIN_TAB_STRIP_WIDTH).then_some(label)
 }
 
 // The tab strip's usable area once the right edge is reserved for the
 // hostname display, so tabs and trailing controls never render underneath it.
 pub(crate) fn tab_bar_content_area(app: &AppState, area: Rect) -> Rect {
-    let reserved = hostname_label(app)
+    let reserved = hostname_label(app, area)
         .map(|label| display_width_u16(&label).saturating_add(1))
         .unwrap_or(0);
     Rect {
@@ -417,7 +429,7 @@ pub(super) fn render_tab_bar(app: &AppState, frame: &mut Frame, area: Rect) {
         }
     }
 
-    if let Some(label) = hostname_label(app) {
+    if let Some(label) = hostname_label(app, area) {
         let width = display_width_u16(&label).min(area.width);
         let rect = Rect::new(area.x + area.width - width, area.y, width, 1);
         frame.render_widget(
@@ -539,11 +551,50 @@ mod tests {
         let mut app = AppState::test_new();
         app.tab_bar_hostname = Some("\x1b\r\n".into());
 
-        assert_eq!(hostname_label(&app), None);
+        assert_eq!(hostname_label(&app, Rect::new(0, 0, 40, 1)), None);
         assert_eq!(
             tab_bar_content_area(&app, Rect::new(0, 0, 40, 1)),
             Rect::new(0, 0, 40, 1)
         );
+    }
+
+    #[test]
+    fn oversized_hostname_yields_to_tab_controls() {
+        let mut app = AppState::test_new();
+        app.tab_bar_hostname = Some("a-hostname-wider-than-the-whole-bar".into());
+        let ws = Workspace::test_new("test");
+
+        app.workspaces = vec![ws];
+        app.active = Some(0);
+        app.view.tab_bar_rect = Rect::new(0, 0, 30, 1);
+
+        // The reservation would leave less than a usable tab strip, so the
+        // hostname is dropped and the tabs keep the full row.
+        assert_eq!(
+            tab_bar_content_area(&app, app.view.tab_bar_rect),
+            app.view.tab_bar_rect
+        );
+
+        let view = compute_tab_bar_view(
+            &app.workspaces[0],
+            tab_bar_content_area(&app, app.view.tab_bar_rect),
+            0,
+            true,
+            true,
+        );
+        app.view.tab_hit_areas = view.tab_hit_areas.clone();
+        app.view.new_tab_hit_area = view.new_tab_hit_area;
+        assert!(view.tab_hit_areas[0].width > 0);
+        assert!(view.new_tab_hit_area.width > 0);
+
+        let backend = TestBackend::new(30, 1);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| render_tab_bar(&app, frame, app.view.tab_bar_rect))
+            .unwrap();
+
+        let row = buffer_row_text(terminal.backend().buffer(), app.view.tab_bar_rect, 0);
+        assert!(!row.contains("hostname"), "tab row: {row:?}");
     }
 
     #[test]
