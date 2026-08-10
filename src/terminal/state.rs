@@ -147,6 +147,15 @@ pub struct TerminalState {
     recent_agent_process_exit: Option<RecentAgentProcessExit>,
     agent_process_acquisition_pending: bool,
     pub pending_agent_resume_plan: Option<crate::agent_resume::AgentResumePlan>,
+    pub agent_launch_args: Option<AgentLaunchArgs>,
+}
+
+/// The options an agent process was started with, kept per agent so a resume
+/// never replays options that belonged to a different agent in the same pane.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentLaunchArgs {
+    pub agent: String,
+    pub args: Vec<String>,
 }
 
 impl TerminalState {
@@ -181,6 +190,7 @@ impl TerminalState {
             recent_agent_process_exit: None,
             agent_process_acquisition_pending: false,
             pending_agent_resume_plan: None,
+            agent_launch_args: None,
         }
     }
 
@@ -214,6 +224,20 @@ impl TerminalState {
             self.agent_process_acquisition_pending = false;
         }
         suppress_completion
+    }
+
+    /// Record the options the foreground agent process was started with.
+    /// Returns true when the stored options changed and the session needs saving.
+    pub fn set_agent_launch_args(&mut self, agent: &str, args: Vec<String>) -> bool {
+        let observed = AgentLaunchArgs {
+            agent: agent.to_string(),
+            args,
+        };
+        if self.agent_launch_args.as_ref() == Some(&observed) {
+            return false;
+        }
+        self.agent_launch_args = Some(observed);
+        true
     }
 
     pub(crate) fn terminal_title_stripped(&self) -> Option<String> {
@@ -2059,6 +2083,7 @@ impl TerminalState {
         self.recent_agent_process_exit = None;
         self.agent_process_acquisition_pending = false;
         self.pending_agent_resume_plan = None;
+        self.agent_launch_args = None;
         self.clear_agent_name();
     }
 
