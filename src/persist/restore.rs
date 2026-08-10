@@ -544,7 +544,8 @@ fn restore_tab(
             let terminal_id = TerminalId::alloc();
             let mut terminal = TerminalState::new(terminal_id.clone(), cwd.clone())
                 .with_pending_agent_resume_plan(plan);
-            if let Some(launch) = saved_agent_launch {
+            if let Some(launch) = agent_launch_for_session(saved_agent_launch, saved_agent_session)
+            {
                 terminal.set_agent_launch_args(&launch.agent, launch.args.clone());
             }
             if let Some(label) = saved_label {
@@ -643,7 +644,9 @@ fn restore_tab(
                     if let Some(argv) = saved_launch_argv {
                         terminal = terminal.with_launch_argv(argv).with_respawn_shell_on_exit();
                     }
-                    if let Some(launch) = saved_agent_launch {
+                    if let Some(launch) =
+                        agent_launch_for_session(saved_agent_launch, saved_agent_session)
+                    {
                         terminal.set_agent_launch_args(&launch.agent, launch.args.clone());
                     }
                 }
@@ -796,6 +799,16 @@ fn pane_restore_startup<'a>(
     }
 }
 
+/// Options belong to the agent that was running. A pane that later ran a
+/// different agent must not reuse the previous agent's options. A pane with no
+/// recorded session carries no contradicting evidence, so its options stand.
+fn agent_launch_for_session<'a>(
+    agent_launch: Option<&'a PaneAgentLaunchSnapshot>,
+    session: Option<&PaneAgentSessionSnapshot>,
+) -> Option<&'a PaneAgentLaunchSnapshot> {
+    agent_launch.filter(|launch| session.is_none_or(|session| session.agent == launch.agent))
+}
+
 fn restore_plan_for_snapshot(
     session: &PaneAgentSessionSnapshot,
     agent_launch: Option<&PaneAgentLaunchSnapshot>,
@@ -805,10 +818,7 @@ fn restore_plan_for_snapshot(
         return None;
     }
     let persisted = persisted_agent_session_from_snapshot(session)?;
-    // Options belong to the agent that was running. A pane that later ran a
-    // different agent must not resume with the previous agent's options.
-    let launch_args = agent_launch
-        .filter(|launch| launch.agent == session.agent)
+    let launch_args = agent_launch_for_session(agent_launch, Some(session))
         .map_or(&[][..], |launch| launch.args.as_slice());
     crate::agent_resume::plan_with_launch_args(
         &session.source,
@@ -1071,6 +1081,38 @@ mod tests {
                 .argv,
             vec!["claude", "--resume", "claude-session"]
         );
+    }
+
+    #[test]
+    fn saved_agent_options_survive_only_a_matching_or_absent_session() {
+        let session = super::super::snapshot::PaneAgentSessionSnapshot {
+            source: "herdr:claude".into(),
+            agent: "claude".into(),
+            kind: crate::agent_resume::AgentSessionRefKind::Id,
+            value: "claude-session".into(),
+        };
+        let launch = super::super::snapshot::PaneAgentLaunchSnapshot {
+            agent: "claude".into(),
+            args: vec!["--permission-mode".into(), "bypassPermissions".into()],
+        };
+
+        assert_eq!(
+            agent_launch_for_session(Some(&launch), Some(&session)).map(|l| l.agent.as_str()),
+            Some("claude")
+        );
+        // No session recorded, so nothing contradicts the saved options.
+        assert_eq!(
+            agent_launch_for_session(Some(&launch), None).map(|l| l.agent.as_str()),
+            Some("claude")
+        );
+
+        let other_agent = super::super::snapshot::PaneAgentSessionSnapshot {
+            agent: "codex".into(),
+            source: "herdr:codex".into(),
+            ..session
+        };
+        assert!(agent_launch_for_session(Some(&launch), Some(&other_agent)).is_none());
+        assert!(agent_launch_for_session(None, Some(&other_agent)).is_none());
     }
 
     #[test]
