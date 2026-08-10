@@ -11,6 +11,7 @@
 - `theme.custom.sidebar_bg` can now give the desktop sidebar its own background without changing built-in theme defaults.
 - Settings and `ui.status_indicators = "symbols"` can now use distinct static shapes for blocked, working, done, idle, and unknown agent states. (#2260)
 - The plugin marketplace now discovers valid manifests at repository roots and subdirectories, groups multiple plugins under each repository, and publishes their versions and exact default-branch commits.
+- Native agent session restore now replays the options the agent was started with, so a pane started as `claude --permission-mode bypassPermissions` resumes with that permission mode instead of default permissions. Session-selection options, non-interactive options, and launch prompts are not replayed.
 
 ### Changed
 - Desktop tab labels are now centered in their tabs, so the active-tab highlight has symmetric padding.
