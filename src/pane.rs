@@ -186,22 +186,43 @@ fn active_pending_release(
 /// Report the options a probed agent process was started with, once per change.
 /// `last_reported` keeps the detector from resending the same options on every probe.
 async fn publish_changed_agent_launch_args(
-    last_reported: &mut Option<(Agent, Vec<String>)>,
+    last_reported: &mut Option<(Option<u32>, Agent, Vec<String>)>,
     state_events: &mpsc::Sender<AppEvent>,
     pane_id: PaneId,
+    process_group_id: Option<u32>,
     agent: Option<Agent>,
     args: Option<Vec<String>>,
 ) {
-    let (Some(agent), Some(args)) = (agent, args) else {
+    let Some(agent) = agent else {
         return;
+    };
+    let args = match args {
+        Some(args) => args,
+        None => {
+            // Options that cannot be read say nothing about what is running, so
+            // the last ones stand only while the same job is still in front.
+            let Some((last_group, last_agent, _)) = last_reported.as_ref() else {
+                // Nothing was reported yet, so anything already stored came
+                // from a restored snapshot and is not ours to overwrite.
+                return;
+            };
+            if *last_agent == agent && *last_group == process_group_id {
+                return;
+            }
+            // A later invocation is in front, so the stored options are its
+            // predecessor's and must not be replayed on resume.
+            Vec::new()
+        }
     };
     if last_reported
         .as_ref()
-        .is_some_and(|(last_agent, last_args)| *last_agent == agent && *last_args == args)
+        .is_some_and(|(last_group, last_agent, last_args)| {
+            *last_group == process_group_id && *last_agent == agent && *last_args == args
+        })
     {
         return;
     }
-    *last_reported = Some((agent, args.clone()));
+    *last_reported = Some((process_group_id, agent, args.clone()));
 
     if let Err(e) = state_events
         .send(AppEvent::AgentLaunchArgsDetected {
@@ -737,7 +758,7 @@ fn spawn_basic_detection_task(
         let mut last_screen_scan_detection_content_seq = None;
         let mut agent_startup_grace_until = None;
         let mut pending_idle = PendingIdleConfirmation::default();
-        let mut last_agent_launch_args: Option<(Agent, Vec<String>)> = None;
+        let mut last_agent_launch_args: Option<(Option<u32>, Agent, Vec<String>)> = None;
 
         loop {
             let sleep_duration = if pending_idle.active() {
@@ -828,6 +849,7 @@ fn spawn_basic_detection_task(
                     &mut last_agent_launch_args,
                     &state_events,
                     pane_id,
+                    tracked_process_group_id,
                     new_agent,
                     probe.agent_launch_args.clone(),
                 )
@@ -2225,7 +2247,8 @@ impl PaneRuntime {
                 let mut last_screen_scan_detection_content_seq = None;
                 let mut agent_startup_grace_until = None;
                 let mut pending_idle = PendingIdleConfirmation::default();
-                let mut last_agent_launch_args: Option<(detect::Agent, Vec<String>)> = None;
+                let mut last_agent_launch_args: Option<(Option<u32>, detect::Agent, Vec<String>)> =
+                    None;
 
                 tokio::time::sleep(Duration::from_millis(50)).await;
 
@@ -2334,6 +2357,7 @@ impl PaneRuntime {
                                 &mut last_agent_launch_args,
                                 &state_events,
                                 pane_id,
+                                tracked_process_group_id,
                                 new_agent,
                                 probe.agent_launch_args,
                             )
@@ -3089,6 +3113,81 @@ mod tests {
         apply_pane_launch_env(&mut cmd, &PaneLaunchEnv::default());
 
         assert!(cmd.get_env("CODEX_THREAD_ID").is_none());
+    }
+
+    #[tokio::test]
+    async fn unreadable_options_never_carry_across_agent_invocations() {
+        let (events, mut event_rx) = mpsc::channel(8);
+        let pane_id = PaneId::alloc();
+        let mut last = None;
+
+        let args = |values: &[&str]| Some(values.iter().map(|v| v.to_string()).collect::<Vec<_>>());
+        let next = |rx: &mut mpsc::Receiver<AppEvent>| match rx.try_recv() {
+            Ok(AppEvent::AgentLaunchArgsDetected { args, .. }) => Some(args),
+            _ => None,
+        };
+
+        publish_changed_agent_launch_args(
+            &mut last,
+            &events,
+            pane_id,
+            Some(10),
+            Some(Agent::Claude),
+            args(&["--permission-mode", "bypassPermissions"]),
+        )
+        .await;
+        assert_eq!(
+            next(&mut event_rx),
+            Some(vec![
+                "--permission-mode".to_string(),
+                "bypassPermissions".to_string()
+            ])
+        );
+
+        // Same job, options momentarily unreadable: the last ones still hold.
+        publish_changed_agent_launch_args(
+            &mut last,
+            &events,
+            pane_id,
+            Some(10),
+            Some(Agent::Claude),
+            None,
+        )
+        .await;
+        assert_eq!(next(&mut event_rx), None);
+
+        // A later invocation of the same agent with unreadable options must not
+        // inherit its predecessor's, since resume matches on the agent alone.
+        publish_changed_agent_launch_args(
+            &mut last,
+            &events,
+            pane_id,
+            Some(11),
+            Some(Agent::Claude),
+            None,
+        )
+        .await;
+        assert_eq!(next(&mut event_rx), Some(Vec::new()));
+    }
+
+    #[tokio::test]
+    async fn unreadable_options_leave_restored_ones_alone() {
+        let (events, mut event_rx) = mpsc::channel(8);
+        let mut last = None;
+
+        // Nothing probed yet, so whatever is stored came from a snapshot.
+        publish_changed_agent_launch_args(
+            &mut last,
+            &events,
+            PaneId::alloc(),
+            Some(10),
+            Some(Agent::Claude),
+            None,
+        )
+        .await;
+
+        assert!(event_rx.try_recv().is_err());
+        assert!(last.is_none());
     }
 
     #[tokio::test]
