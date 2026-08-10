@@ -89,10 +89,15 @@ Herdr also replays the options the agent was started with, so a pane started as
 default permissions.
 
 Options that select or continue a conversation (`--resume`, `--continue`, `--session`) and
-options that switch the agent to a non-interactive run (`--print`, `--prompt`) are never
-replayed, and neither is a prompt typed on the launch command line. An option Herdr does not
-recognize is replayed when it stands alone and dropped when it is followed by a bare value,
-because replaying it without its value would break the resume command.
+options that switch the agent to a one-shot run (`--print`, `--prompt`) are never replayed;
+every other option is, including ones Herdr has never heard of. A bare word is replayed only
+when it directly follows a replayed option, where it is that option's value, so prompts,
+subcommands, and positional session ids are left behind.
+
+Two limits follow from that rule: an option given several separate values keeps only the
+first (`--add-dir /a /b` resumes as `--add-dir /a`), and a prompt written directly after a
+flag cannot be told apart from that flag's value, so it is replayed. Use `--option=value`
+form if you want to be sure a following prompt is not mistaken for a value.
 
 Run `herdr integration status` to check installed integration versions. Reinstall outdated integrations with `herdr integration install <agent>`.
 
