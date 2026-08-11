@@ -54,6 +54,7 @@ fn set_host_color_scheme_reports(enabled: bool) -> io::Result<()> {
     io::stdout().flush()
 }
 
+mod agent_launch_args;
 mod agent_resume;
 mod api;
 mod app;
@@ -339,6 +340,14 @@ const DEFAULT_CONFIG: &str = r##"# herdr configuration
 # Hostname, datetime, and command entries resolve on the Herdr server.
 # tab_bar_right = []
 # tab_bar_right_separator = " "
+
+# Title Herdr writes to the terminal it runs in, which is what window managers
+# show in title, tab, and group bars. Tokens are {hostname}, {workspace}, {tab},
+# {pane}, and {terminal_title}; {{ and }} are literal braces.
+# The title renders on the Herdr server, so {hostname} names the host the panes
+# run on even when attaching from a remote client.
+# Set to "" to leave the outer terminal title alone.
+# window_title = "{hostname}: {workspace}"
 
 # Agent panel ordering: "spaces" (grouped by space) or "priority" (attention queue).
 # "workspaces" is accepted as an alias for "spaces".

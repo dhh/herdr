@@ -71,7 +71,7 @@ pub fn session_ref_from_report(
 
 pub fn normalize_session_start_source(value: Option<String>) -> Option<String> {
     match value.as_deref().map(str::trim) {
-        Some(source @ ("startup" | "resume" | "clear" | "compact" | "new" | "fork")) => {
+        Some(source @ ("startup" | "resume" | "clear" | "compact" | "new" | "fork" | "select")) => {
             Some(source.to_string())
         }
         _ => None,
@@ -114,11 +114,25 @@ pub fn session_ref_from_snapshot(
 }
 
 pub fn plan(source: &str, agent: &str, session_ref: &AgentSessionRef) -> Option<AgentResumePlan> {
+    plan_with_launch_args(source, agent, session_ref, &[])
+}
+
+/// Build the resume command, replaying the options the agent was started with.
+///
+/// `launch_args` is the captured agent command line without the executable.
+/// [`crate::agent_launch_args::replayable`] decides which of those arguments
+/// belong in a resume command.
+pub fn plan_with_launch_args(
+    source: &str,
+    agent: &str,
+    session_ref: &AgentSessionRef,
+    launch_args: &[String],
+) -> Option<AgentResumePlan> {
     if !is_official_agent_source(source, agent) {
         return None;
     }
 
-    let argv = match (source, agent, session_ref.kind) {
+    let mut argv = match (source, agent, session_ref.kind) {
         ("herdr:claude", "claude", AgentSessionRefKind::Id) => {
             vec![
                 "claude".into(),
@@ -204,6 +218,8 @@ pub fn plan(source: &str, agent: &str, session_ref: &AgentSessionRef) -> Option<
         }
         _ => return None,
     };
+
+    argv.extend(crate::agent_launch_args::replayable(agent, launch_args));
 
     Some(AgentResumePlan {
         agent: agent.to_string(),
@@ -451,6 +467,63 @@ mod tests {
     }
 
     #[test]
+    fn planner_replays_the_options_the_agent_was_started_with() {
+        let launch_args = vec![
+            "--permission-mode".to_string(),
+            "bypassPermissions".to_string(),
+            "--resume".to_string(),
+            "previous-session".to_string(),
+        ];
+
+        assert_eq!(
+            plan_with_launch_args(
+                "herdr:claude",
+                "claude",
+                &AgentSessionRef::id("claude-session").unwrap(),
+                &launch_args,
+            )
+            .unwrap()
+            .argv,
+            vec![
+                "claude",
+                "--resume",
+                "claude-session",
+                "--permission-mode",
+                "bypassPermissions",
+            ]
+        );
+
+        assert_eq!(
+            plan_with_launch_args(
+                "herdr:codex",
+                "codex",
+                &AgentSessionRef::id("codex-session").unwrap(),
+                &["-s".to_string(), "danger-full-access".to_string()],
+            )
+            .unwrap()
+            .argv,
+            vec![
+                "codex",
+                "resume",
+                "codex-session",
+                "-s",
+                "danger-full-access"
+            ]
+        );
+    }
+
+    #[test]
+    fn planner_ignores_launch_args_for_unsupported_sources() {
+        assert!(plan_with_launch_args(
+            "custom:claude",
+            "claude",
+            &AgentSessionRef::id("claude-session").unwrap(),
+            &["--dangerously-skip-permissions".to_string()],
+        )
+        .is_none());
+    }
+
+    #[test]
     fn planner_rejects_custom_and_unsupported_path_refs() {
         let claude_session = absolute_test_path("claude-session");
         assert!(plan(
@@ -607,6 +680,10 @@ mod tests {
         assert_eq!(
             normalize_session_start_source(Some("fork".into())),
             Some("fork".into())
+        );
+        assert_eq!(
+            normalize_session_start_source(Some("select".into())),
+            Some("select".into())
         );
         assert_eq!(
             normalize_session_start_source(Some(" resume ".into())),

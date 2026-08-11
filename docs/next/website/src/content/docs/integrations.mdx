@@ -3,9 +3,7 @@ title: Integrations
 description: Install Herdr integrations for Pi, OMP, Claude Code, Codex, GitHub Copilot CLI, Devin CLI, Droid, Kimi Code CLI, OpenCode, Kilo Code CLI, Hermes Agent, Qoder CLI, Cursor Agent CLI, MastraCode, Antigravity CLI, and Grok CLI.
 ---
 
-Herdr detects supported agents automatically. Official integrations can add native session identity for restore, lifecycle state reports, or both.
-
-Use integrations when you want native agent session restore, direct lifecycle reports, or both. See [Agents](/docs/agents/) for the full status authority model.
+Herdr detects supported agents automatically. Install official integrations when you want native agent session restore, direct lifecycle reports, or both. See [Agents](/docs/agents/) for the full status authority model.
 
 ## Install integrations
 
@@ -53,14 +51,14 @@ herdr integration uninstall grok
 
 ## How Herdr uses integrations
 
-Herdr uses integrations in two different ways:
+Herdr uses integrations in two ways:
 
 | Integration type | Agents | Effect |
 | --- | --- | --- |
 | Lifecycle authority | Pi, OMP, Kimi Code CLI, OpenCode, Kilo Code CLI, MastraCode | When installed and actively reporting for the pane, hook or plugin events author `idle`, `working`, and `blocked`. Herdr does not also use screen manifest fallback for that same lifecycle authority. |
 | Session identity | Claude Code, Codex, GitHub Copilot CLI, Devin CLI, Droid, Qoder CLI, Cursor Agent CLI, Hermes Agent, Antigravity CLI, Grok CLI | The integration reports native session references for restore. State still comes from Herdr's screen manifest detection. |
 
-Custom integrations can also report state when they define state that is not visible in the native terminal UI. They do not need to be built into Herdr or use a recognized agent executable.
+Custom integrations can also report state that is not visible in the native terminal UI. They do not need to be built into Herdr or use a recognized agent executable.
 
 ## Integrate your own agent
 
@@ -81,9 +79,9 @@ Report `idle` when the agent is ready for input and `blocked` when it needs a us
   --agent my-agent
 ```
 
-Only report when `HERDR_ENV=1` and the required variables are present so the integration remains a no-op outside Herdr. Keep `--source` stable and unique to the integration. If reports can arrive out of order, include a strictly increasing `--seq`; Herdr ignores stale sequence numbers from the same source.
+Report only when `HERDR_ENV=1` and the required variables are present. This keeps the integration a no-op outside Herdr. Keep `--source` stable and unique to the integration. If reports can arrive out of order, include a strictly increasing `--seq`; Herdr ignores stale sequence numbers from the same source.
 
-You can include `--agent-session-id` or `--agent-session-path` with `report-agent`, or use `pane report-agent-session` when session identity changes independently of state. Herdr exposes that reference through its pane and agent APIs. Automatic session restore additionally requires Herdr to know how to launch that agent and resume the referenced session.
+You can include `--agent-session-id` or `--agent-session-path` with `report-agent`, or use `pane report-agent-session` when session identity changes independently of state. Herdr exposes that reference through its pane and agent APIs. Automatic session restore also requires Herdr to know how to launch that agent and resume the referenced session.
 
 Use `HERDR_BIN_PATH` and the CLI wrappers for portable integrations. Code that needs direct IPC can send the equivalent `pane.report_agent`, `pane.report_agent_session`, and `pane.release_agent` requests described in the [Socket API](/docs/socket-api/#agent-state-reporting).
 
@@ -297,7 +295,7 @@ herdr integration install antigravity-cli
 
 Herdr uses `~/.gemini/config/` by default, or `ANTIGRAVITY_CLI_CONFIG_DIR` when set. This is the directory Antigravity CLI reads global customizations from, and it must already exist. Install writes `hooks/herdr-agent-state.sh` (or `herdr-agent-state.ps1` on Windows) and adds a Herdr-owned `herdr` block to `hooks.json`. Antigravity CLI keys `hooks.json` by hook name, so install rewrites only that block and leaves other named hooks untouched. Uninstall removes the `herdr` block and deletes the hook script.
 
-This integration is session-only. It reports the conversation the pane is running and does not report agent state, so Herdr keeps deriving working, idle, and blocked from what Antigravity CLI draws on screen.
+This session-only integration reports the pane's current conversation, but not agent state. Herdr keeps deriving working, idle, and blocked from what Antigravity CLI draws on screen.
 
 The hook runs on `PreInvocation`, so Herdr learns the conversation once the first prompt is sent. From then on Herdr can resume the pane with `agy --conversation <id>` after a Herdr server restart.
 

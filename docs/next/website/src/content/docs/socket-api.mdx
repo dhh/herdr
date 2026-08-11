@@ -375,7 +375,7 @@ Set or clear the foreground client's outer terminal window title:
 {"id":"req_title_clear","method":"client.window_title.clear","params":{}}
 ```
 
-`client.window_title.clear` restores Herdr's default title. The response is
+`client.window_title.clear` hands the title back to `ui.window_title`. The response is
 `type: "client_window_title"` with `changed` and reason `set`, `cleared`, or
 `no_foreground_client`.
 
@@ -480,10 +480,10 @@ A source mismatch leaves the active view unchanged. Set and clear responses use
 
 ## Plugin APIs
 
-The plugin API is an early host surface for executable workflow tools. A plugin
-is a package with a `herdr-plugin.toml` manifest. The manifest declares
-startup hooks, shareable actions, event hooks, terminal pane entrypoints, and
-link handlers. Startup hooks run once after restore when the API is ready.
+The plugin API is an early interface for executable workflow tools. A plugin is
+a package with a `herdr-plugin.toml` manifest. The manifest declares startup
+hooks, shareable actions, event hooks, terminal pane entrypoints, and link
+handlers. Startup hooks run once after restore when the API is ready.
 Actions and panes are manifest-only; runtime action registration and runtime
 argv pane creation are not part of v1.
 
@@ -492,11 +492,14 @@ Installed and linked plugins persist across restarts. Herdr writes a
 `plugin.unlink`, `plugin.enable`, and `plugin.disable`. The
 `herdr plugin install` and `herdr plugin link` CLIs also write the same registry
 when Herdr is not running, then startup loads it automatically. On startup,
-Herdr re-reads each
-manifest from its original path; if the file is missing or unparseable the entry
-is kept with a `warnings` field so `plugin.list` surfaces it.
+Herdr re-reads each manifest from its original path; if the file is missing or
+unparseable, the entry is kept with a `warnings` field so `plugin.list` surfaces
+it.
 
-Event hook `on` values are validated against the known Herdr event names at link time. An unrecognised name is not an error — the link still succeeds — but the returned plugin info includes a warning (e.g. `"unknown event 'worktree.craeted'"`). Check the `warnings` field in the `plugin.link` and `plugin.list` responses.
+Herdr validates event hook `on` values against known event names at link time.
+An unrecognised name does not block the link, but the returned plugin info
+includes a warning (e.g. `"unknown event 'worktree.craeted'"`). Check the
+`warnings` field in the `plugin.link` and `plugin.list` responses.
 
 Link a local plugin manifest:
 
@@ -552,7 +555,7 @@ field is missing, invalid, or newer than the running Herdr binary.
 
 Declare `platforms` at the top level with the OS identifiers (`linux`, `macos`,
 `windows`) your plugin supports. Omitting `platforms` is allowed for local
-development — `plugin.link` succeeds but the response includes a warning.
+development. `plugin.link` succeeds, but the response includes a warning.
 Individual build commands, actions, event hooks, panes, and link handlers can
 declare their own `platforms` to override the plugin-level list; if omitted they
 inherit from the plugin. Invoking an action or opening a pane whose effective
@@ -695,7 +698,8 @@ Integrations report agent state with `pane.report_agent`.
 }
 ```
 
-`state` is semantic. It affects waits, notifications, and rollups. Report display-only values separately through metadata.
+`state` carries semantic agent state and affects waits, notifications, and
+rollups. Report display-only values separately through metadata.
 
 Session-only official integrations report native session references with `pane.report_agent_session`. State-reporting integrations can still include native session references in `pane.report_agent`. State-independent session reports do not affect waits, notifications, or rollups.
 
@@ -917,6 +921,7 @@ Errors look like this:
 
 ## Protocol stability
 
-Herdr has a protocol version for client/server compatibility. Protocol changes are reviewed with release compatibility in mind.
+Herdr has a protocol version for client/server compatibility. Protocol changes
+are reviewed for release compatibility.
 
 Check the server protocol with `ping` or `herdr status` before depending on new behavior. Handle unknown fields gracefully.

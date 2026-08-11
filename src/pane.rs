@@ -183,6 +183,63 @@ fn active_pending_release(
     }
 }
 
+/// Report the options a probed agent process was started with, once per change.
+/// `last_reported` keeps the detector from resending the same options on every probe.
+async fn publish_changed_agent_launch_args(
+    last_reported: &mut Option<(Option<u32>, Agent, Vec<String>)>,
+    state_events: &mpsc::Sender<AppEvent>,
+    pane_id: PaneId,
+    process_group_id: Option<u32>,
+    agent: Option<Agent>,
+    args: Option<Vec<String>>,
+) {
+    let Some(agent) = agent else {
+        return;
+    };
+    let args = match args {
+        Some(args) => args,
+        None => {
+            // Options that cannot be read say nothing about what is running, so
+            // the last ones stand only while the same job is still in front.
+            let Some((last_group, last_agent, _)) = last_reported.as_ref() else {
+                // Nothing was reported yet, so anything already stored came
+                // from a restored snapshot and is not ours to overwrite.
+                return;
+            };
+            if *last_agent == agent && *last_group == process_group_id {
+                return;
+            }
+            // A later invocation is in front, so the stored options are its
+            // predecessor's and must not be replayed on resume.
+            Vec::new()
+        }
+    };
+    if last_reported
+        .as_ref()
+        .is_some_and(|(last_group, last_agent, last_args)| {
+            *last_group == process_group_id && *last_agent == agent && *last_args == args
+        })
+    {
+        return;
+    }
+    *last_reported = Some((process_group_id, agent, args.clone()));
+
+    if let Err(e) = state_events
+        .send(AppEvent::AgentLaunchArgsDetected {
+            pane_id,
+            agent,
+            args,
+        })
+        .await
+    {
+        warn!(
+            pane = pane_id.raw(),
+            err = %e,
+            "failed to deliver AgentLaunchArgsDetected event"
+        );
+    }
+}
+
 async fn publish_state_changed_event(
     state_events: mpsc::Sender<AppEvent>,
     pane_id: PaneId,
@@ -212,6 +269,28 @@ async fn publish_state_changed_event(
             pane = pane_id.raw(),
             err = %e,
             "failed to deliver StateChanged event"
+        );
+    }
+}
+
+async fn publish_agent_process_detected_event(
+    state_events: mpsc::Sender<AppEvent>,
+    pane_id: PaneId,
+    agent: Agent,
+    observed_at: std::time::Instant,
+) {
+    if let Err(e) = state_events
+        .send(AppEvent::AgentProcessDetected {
+            pane_id,
+            agent,
+            observed_at,
+        })
+        .await
+    {
+        warn!(
+            pane = pane_id.raw(),
+            err = %e,
+            "failed to deliver AgentProcessDetected event"
         );
     }
 }
@@ -507,6 +586,9 @@ struct ProcessProbeResult {
     foreground_is_pane_shell: bool,
     agent: Option<Agent>,
     process_name: Option<String>,
+    /// Options the detected agent was started with, without the executable.
+    /// Herdr replays them when it resumes the agent's session.
+    agent_launch_args: Option<Vec<String>>,
 }
 
 fn agent_hint_for_foreground_job_members(
@@ -552,6 +634,7 @@ fn process_probe_result(
         foreground_is_pane_shell: job.processes.iter().any(|process| process.pid == pid),
         agent: Some(agent),
         process_name: Some(process_name),
+        agent_launch_args: crate::detect::agent_launch_args_in_job(job, agent),
     }
 }
 
@@ -612,6 +695,9 @@ fn probe_foreground_process_from_jobs(
             process_group_id: Some(job.process_group_id),
             foreground_is_pane_shell: job.processes.iter().any(|process| process.pid == pid),
             agent: identified.as_ref().map(|(agent, _)| *agent),
+            agent_launch_args: identified
+                .as_ref()
+                .and_then(|(agent, _)| crate::detect::agent_launch_args_in_job(job, *agent)),
             process_name: identified.map(|(_, process_name)| process_name),
         };
     }
@@ -621,6 +707,7 @@ fn probe_foreground_process_from_jobs(
         foreground_is_pane_shell: false,
         agent: None,
         process_name: None,
+        agent_launch_args: None,
     }
 }
 
@@ -671,6 +758,7 @@ fn spawn_basic_detection_task(
         let mut last_screen_scan_detection_content_seq = None;
         let mut agent_startup_grace_until = None;
         let mut pending_idle = PendingIdleConfirmation::default();
+        let mut last_agent_launch_args: Option<(Option<u32>, Agent, Vec<String>)> = None;
 
         loop {
             let sleep_duration = if pending_idle.active() {
@@ -699,6 +787,7 @@ fn spawn_basic_detection_task(
                     last_screen_scan_detection_content_seq = None;
                     agent_startup_grace_until = None;
                     pending_idle.clear();
+                    last_agent_launch_args = None;
                 }
             }
 
@@ -756,6 +845,15 @@ fn spawn_basic_detection_task(
                         *pending_release = None;
                     }
                 }
+                publish_changed_agent_launch_args(
+                    &mut last_agent_launch_args,
+                    &state_events,
+                    pane_id,
+                    tracked_process_group_id,
+                    new_agent,
+                    probe.agent_launch_args.clone(),
+                )
+                .await;
                 let previous_agent = agent_presence.current_agent();
                 let foreground_action = foreground_shell_agent_action(
                     previous_agent,
@@ -792,21 +890,17 @@ fn spawn_basic_detection_task(
                         // A new foreground agent must not inherit OSC
                         // title/progress evidence from the previous process.
                         terminal.clear_agent_osc_state();
-                        if agent.is_some() {
+                        if let Some(agent) = agent {
                             agent_startup_grace_until = Some(now + AGENT_STARTUP_GRACE_WINDOW);
-                            state = AgentState::Idle;
-                            last_visible_idle = true;
+                            state = AgentState::Unknown;
+                            last_visible_idle = false;
                             last_visible_blocker = false;
                             last_visible_working = false;
                             last_visible_signal_refresh = None;
-                            publish_state_changed_event(
+                            publish_agent_process_detected_event(
                                 state_events.clone(),
                                 pane_id,
                                 agent,
-                                AgentState::Idle,
-                                false,
-                                false,
-                                false,
                                 now,
                             )
                             .await;
@@ -1899,7 +1993,10 @@ impl PaneRuntime {
                     terminal.process_pty_bytes(pane_id, shell_pid, bytes, &response_writer);
                 publish_terminal_bells(pane_id, result.terminal_bells, &read_events);
                 observe_detection_content_change(bytes, &detection_content_seq);
-                if result.request_render && render_dirty.request_pty(pane_id) {
+                let title_requested =
+                    result.terminal_title_changed && render_dirty.request_terminal_title(pane_id);
+                let render_requested = result.request_render && render_dirty.request_pty(pane_id);
+                if title_requested || render_requested {
                     render_notify.notify_one();
                 }
                 if let Some(delay) = result.render_delay {
@@ -2062,7 +2159,10 @@ impl PaneRuntime {
                 if agent_detection == AgentDetection::Enabled {
                     observe_detection_content_change(bytes, &detection_content_seq);
                 }
-                if result.request_render && render_dirty.request_pty(pane_id) {
+                let title_requested =
+                    result.terminal_title_changed && render_dirty.request_terminal_title(pane_id);
+                let render_requested = result.request_render && render_dirty.request_pty(pane_id);
+                if title_requested || render_requested {
                     render_notify.notify_one();
                 }
                 if let Some(delay) = result.render_delay {
@@ -2147,6 +2247,8 @@ impl PaneRuntime {
                 let mut last_screen_scan_detection_content_seq = None;
                 let mut agent_startup_grace_until = None;
                 let mut pending_idle = PendingIdleConfirmation::default();
+                let mut last_agent_launch_args: Option<(Option<u32>, detect::Agent, Vec<String>)> =
+                    None;
 
                 tokio::time::sleep(Duration::from_millis(50)).await;
 
@@ -2185,6 +2287,7 @@ impl PaneRuntime {
                             last_screen_scan_detection_content_seq = None;
                             agent_startup_grace_until = None;
                             pending_idle.clear();
+                            last_agent_launch_args = None;
                         }
                     }
 
@@ -2250,6 +2353,16 @@ impl PaneRuntime {
                                 }
                             }
 
+                            publish_changed_agent_launch_args(
+                                &mut last_agent_launch_args,
+                                &state_events,
+                                pane_id,
+                                tracked_process_group_id,
+                                new_agent,
+                                probe.agent_launch_args,
+                            )
+                            .await;
+
                             let previous_agent = agent_presence.current_agent();
                             let foreground_action = foreground_shell_agent_action(
                                 previous_agent,
@@ -2287,22 +2400,18 @@ impl PaneRuntime {
                                     // A new foreground agent must not inherit OSC
                                     // title/progress evidence from the previous process.
                                     terminal.clear_agent_osc_state();
-                                    if agent.is_some() {
+                                    if let Some(agent) = agent {
                                         agent_startup_grace_until =
                                             Some(now + AGENT_STARTUP_GRACE_WINDOW);
-                                        state = AgentState::Idle;
-                                        last_visible_idle = true;
+                                        state = AgentState::Unknown;
+                                        last_visible_idle = false;
                                         last_visible_blocker = false;
                                         last_visible_working = false;
                                         last_visible_signal_refresh = None;
-                                        publish_state_changed_event(
+                                        publish_agent_process_detected_event(
                                             state_events.clone(),
                                             pane_id,
                                             agent,
-                                            AgentState::Idle,
-                                            false,
-                                            false,
-                                            false,
                                             now,
                                         )
                                         .await;
@@ -3004,6 +3113,81 @@ mod tests {
         apply_pane_launch_env(&mut cmd, &PaneLaunchEnv::default());
 
         assert!(cmd.get_env("CODEX_THREAD_ID").is_none());
+    }
+
+    #[tokio::test]
+    async fn unreadable_options_never_carry_across_agent_invocations() {
+        let (events, mut event_rx) = mpsc::channel(8);
+        let pane_id = PaneId::alloc();
+        let mut last = None;
+
+        let args = |values: &[&str]| Some(values.iter().map(|v| v.to_string()).collect::<Vec<_>>());
+        let next = |rx: &mut mpsc::Receiver<AppEvent>| match rx.try_recv() {
+            Ok(AppEvent::AgentLaunchArgsDetected { args, .. }) => Some(args),
+            _ => None,
+        };
+
+        publish_changed_agent_launch_args(
+            &mut last,
+            &events,
+            pane_id,
+            Some(10),
+            Some(Agent::Claude),
+            args(&["--permission-mode", "bypassPermissions"]),
+        )
+        .await;
+        assert_eq!(
+            next(&mut event_rx),
+            Some(vec![
+                "--permission-mode".to_string(),
+                "bypassPermissions".to_string()
+            ])
+        );
+
+        // Same job, options momentarily unreadable: the last ones still hold.
+        publish_changed_agent_launch_args(
+            &mut last,
+            &events,
+            pane_id,
+            Some(10),
+            Some(Agent::Claude),
+            None,
+        )
+        .await;
+        assert_eq!(next(&mut event_rx), None);
+
+        // A later invocation of the same agent with unreadable options must not
+        // inherit its predecessor's, since resume matches on the agent alone.
+        publish_changed_agent_launch_args(
+            &mut last,
+            &events,
+            pane_id,
+            Some(11),
+            Some(Agent::Claude),
+            None,
+        )
+        .await;
+        assert_eq!(next(&mut event_rx), Some(Vec::new()));
+    }
+
+    #[tokio::test]
+    async fn unreadable_options_leave_restored_ones_alone() {
+        let (events, mut event_rx) = mpsc::channel(8);
+        let mut last = None;
+
+        // Nothing probed yet, so whatever is stored came from a snapshot.
+        publish_changed_agent_launch_args(
+            &mut last,
+            &events,
+            PaneId::alloc(),
+            Some(10),
+            Some(Agent::Claude),
+            None,
+        )
+        .await;
+
+        assert!(event_rx.try_recv().is_err());
+        assert!(last.is_none());
     }
 
     #[tokio::test]
@@ -3759,6 +3943,48 @@ mod tests {
 
         assert_eq!(result.agent, Some(Agent::Claude));
         assert_eq!(result.process_name.as_deref(), Some("claude"));
+    }
+
+    #[test]
+    fn process_probe_reads_the_options_the_agent_was_started_with() {
+        let job = crate::platform::ForegroundJob {
+            process_group_id: 99,
+            processes: vec![crate::platform::ForegroundProcess {
+                pid: 99,
+                name: "claude".to_string(),
+                argv0: None,
+                argv: Some(vec![
+                    "claude".to_string(),
+                    "--permission-mode".to_string(),
+                    "bypassPermissions".to_string(),
+                ]),
+                cmdline: None,
+            }],
+        };
+
+        let result = probe_foreground_process_from_jobs(42, Some(99), Some(job), || None, |_| None);
+
+        assert_eq!(result.agent, Some(Agent::Claude));
+        assert_eq!(
+            result.agent_launch_args,
+            Some(vec![
+                "--permission-mode".to_string(),
+                "bypassPermissions".to_string()
+            ])
+        );
+    }
+
+    #[test]
+    fn process_probe_has_no_options_without_an_agent() {
+        let job = crate::platform::ForegroundJob {
+            process_group_id: 99,
+            processes: vec![foreground_process(99, "bash")],
+        };
+
+        let result = probe_foreground_process_from_jobs(42, Some(99), None, || Some(job), |_| None);
+
+        assert_eq!(result.agent, None);
+        assert_eq!(result.agent_launch_args, None);
     }
 
     fn process_probe_input() -> ProcessProbeInput {

@@ -56,6 +56,12 @@ pub struct WorktreeRemoveResult {
 pub enum AppEvent {
     /// A pane's child process exited.
     PaneDied { pane_id: PaneId },
+    /// Process detection identified an agent before its screen state was confirmed.
+    AgentProcessDetected {
+        pane_id: PaneId,
+        agent: Agent,
+        observed_at: Instant,
+    },
     /// Fallback detector state changed in a pane.
     StateChanged {
         pane_id: PaneId,
@@ -65,6 +71,13 @@ pub enum AppEvent {
         visible_working: bool,
         process_exited: bool,
         observed_at: Instant,
+    },
+    /// The options a detected agent process was started with.
+    /// Herdr replays them when it resumes that agent's session.
+    AgentLaunchArgsDetected {
+        pane_id: PaneId,
+        agent: Agent,
+        args: Vec<String>,
     },
     /// Hook-authoritative agent state was reported for a pane.
     HookStateReported {
