@@ -1076,6 +1076,65 @@ fn read_until_client_attaches(client: &SpawnedHerdr) -> String {
 }
 
 #[test]
+fn client_exits_cleanly_when_terminal_and_transport_hang_up() {
+    let _lock = test_lock();
+    let base = unique_test_dir();
+    let config_home = base.join("config");
+    let runtime_dir = base.join("runtime");
+    let api_socket = runtime_dir.join("herdr.sock");
+    let client_socket = runtime_dir.join("herdr-client.sock");
+
+    let mut spawned_server = spawn_server(&config_home, &runtime_dir, &api_socket, &client_socket);
+    wait_for_socket(&api_socket, Duration::from_secs(10));
+    wait_for_socket(&client_socket, Duration::from_secs(10));
+
+    let mut thin_client = spawn_client_process(&config_home, &runtime_dir, &api_socket);
+    read_until_client_attaches(&thin_client);
+
+    // Freeze the client so the dead terminal and transport EOF are both
+    // observable when it resumes, making the `--remote` shutdown race deterministic.
+    let client_pid = thin_client.child.process_id().expect("thin client pid") as libc::pid_t;
+    assert_eq!(
+        unsafe { libc::kill(client_pid, libc::SIGSTOP) },
+        0,
+        "stop thin client"
+    );
+    let server_pid = spawned_server.child.process_id().expect("server pid") as libc::pid_t;
+    assert_eq!(
+        unsafe { libc::kill(server_pid, libc::SIGKILL) },
+        0,
+        "kill server transport"
+    );
+    spawned_server.close_master();
+    thin_client.close_master();
+    assert_eq!(
+        unsafe { libc::kill(client_pid, libc::SIGCONT) },
+        0,
+        "resume thin client"
+    );
+
+    let deadline = Instant::now() + Duration::from_secs(12);
+    let status = loop {
+        if let Some(status) = thin_client.child.try_wait().expect("poll thin client") {
+            break Some(status);
+        }
+        if Instant::now() >= deadline {
+            break None;
+        }
+        thread::sleep(Duration::from_millis(20));
+    };
+
+    drop(spawned_server);
+    cleanup_spawned_herdr(thin_client, base);
+
+    let status = status.expect("thin client should exit after terminal and transport hang up");
+    assert!(
+        status.success(),
+        "thin client should exit cleanly after terminal and transport hang up, got {status}"
+    );
+}
+
+#[test]
 fn client_exits_cleanly_when_terminal_hangs_up() {
     let _lock = test_lock();
     let base = unique_test_dir();
